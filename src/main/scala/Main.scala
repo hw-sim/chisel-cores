@@ -1,19 +1,29 @@
 import org.chipsalliance.cde.config.Config
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.system._
-import freechips.rocketchip.rocket.{WithNBigCores, WithNMedCores, WithNSmallCores, WithRV32, WithFP16, WithHypervisor, With1TinyCore, WithScratchpadsOnly, WithCloneRocketTiles, WithB}
+import freechips.rocketchip.rocket._
 import circt.stage
 import boom.v3.common._
 import freechips.rocketchip.diplomacy.Main
-
-class SmallBoomConfig  extends Config(new WithNSmallBooms(1)  ++ new WithCoherentBusTopology ++ new BaseConfig)
-class MediumBoomConfig extends Config(new WithNMediumBooms(1) ++ new WithCoherentBusTopology ++ new BaseConfig)
-class LargeBoomConfig  extends Config(new WithNLargeBooms(1)  ++ new WithCoherentBusTopology ++ new BaseConfig)
-
+import chisel3.RawModule
+import chisel3.stage.ChiselGeneratorAnnotation
+import chisel3.stage.phases.{Elaborate, Convert}
+import firrtl.AnnotationSeq
+import firrtl.options.TargetDirAnnotation
+import freechips.rocketchip.diplomacy.LazyModule
+import org.chipsalliance.cde.config.{Config, Parameters}
 import mainargs._
 import scala.reflect.runtime.universe._
 import scala.reflect.runtime.currentMirror
 import java.nio.file.{Files, Paths}
+import java.io.{InputStream, FileOutputStream}
+import freechips.rocketchip.rocket.WithNHugeCores
+import freechips.rocketchip.devices.tilelink.BootROMParams
+import freechips.rocketchip.devices.tilelink.BootROMLocated
+
+class OverrideBootromLocation(contentFileName: String) extends Config((site, here, up) => {
+  case BootROMLocated(InSubsystem) => Some(BootROMParams(contentFileName=contentFileName))
+})
 
 object main extends App {
   def getClassFullName(className: String): Option[String] = {
@@ -26,36 +36,50 @@ object main extends App {
   }
   @main def elaborate(
     @arg(name = "dir", doc = "output directory")
-    dir: String,
-    @arg(name = "top", doc = "top Module or LazyModule fullpath")
-    top: Option[String],
-    @arg(name = "config", doc = "CDE configs")
-    config: Seq[String]
+    dir_rel: String,
+    @arg(name = "core", doc = "which core to use (TinyRocket, SmallRocket, MedRocket, BigRocket, HugeRocket, SmallBoom, MediumBoom, LargeBoom, MegaBoom, GigaBoom)")
+    core: String = "SmallRocket",
+    @arg(name = "ncores", doc = "number of cores")
+    ncores: Int = 1
   ) = {
-    val opt_top = top match {
-      case Some(top) => top
-      case None => "freechips.rocketchip.system.TestHarness"
+    val config = core match {
+      case "TinyRocket"  => new Config(new With1TinyCore ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "SmallRocket" => new Config(new WithNSmallCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "MedRocket"   => new Config(new WithNMedCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "BigRocket"   => new Config(new WithNBigCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "HugeRocket"  => new Config(new WithNHugeCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "SmallBoom"   => new Config(new WithNSmallBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "MediumBoom"  => new Config(new WithNMediumBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "LargeBoom"   => new Config(new WithNLargeBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "MegaBoom"    => new Config(new WithNMegaBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "GigaBoom"    => new Config(new WithNGigaBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case _ => throw new Exception(s"Unknown core type: $core")
     }
-    val dir_abs = Paths.get(dir).toAbsolutePath()
-    val opt_config = config.map(c => {
-      getClassFullName(c) match {
-        case Some(name) => name
-        case None => getClassFullName(s"freechips.rocketchip.system.$c") match {
-          case Some(name) => name
-          case None => throw new Exception(s"Class not found: $c")
-        }
+    val config_name = s"$core-$ncores"
+    val dir = Paths.get(dir_rel).toAbsolutePath().toString
+    val top = "freechips.rocketchip.system.TestHarness"
+    var topName: String = null
+    val gen = () => new TestHarness()(config)
+    val annos = Seq(
+      new Elaborate,
+      new Convert
+    ).foldLeft(
+      Seq(
+        TargetDirAnnotation(dir),
+        ChiselGeneratorAnnotation(() => gen())
+      ): AnnotationSeq
+    ) { case (annos, phase) => phase.transform(annos) }
+      .flatMap {
+        case firrtl.stage.FirrtlCircuitAnnotation(circuit) =>
+          topName = circuit.main
+          os.write(os.Path(dir) / s"${circuit.main}.fir", circuit.serialize)
+          None
+        case _: chisel3.stage.ChiselCircuitAnnotation => None
+        case _: chisel3.stage.DesignAnnotation[_] => None
+        case a => Some(a)
       }
-    })
-    if(Files.notExists(dir_abs)) {
-      Files.createDirectories(dir_abs)
-    } else {
-      throw new Exception(s"Outout dir already exists $dir")
-    }
-    println(s"Config: $opt_config")
-    println("Firtool Compile Command:")
-    println(s"firtool ${dir}/TestHarness.fir --annotation-file=${dir}/TestHarness.anno.json --disable-annotation-unknown --split-verilog --lowering-options=disallowLocalVariables -o ${dir}/verilog")
-    println()
-    Main.elaborate(dir_abs.toString(), opt_top, opt_config)
+    os.write(os.Path(dir) / s"$topName.anno.json", firrtl.annotations.JsonProtocol.serialize(annos))
+    freechips.rocketchip.util.ElaborationArtefacts.files.foreach{ case (ext, contents) => os.write.over(os.Path(dir) / s"${config_name}.${ext}", contents()) }
   }
-  ParserForMethods(this).runOrExit(args)
+  ParserForMethods(this).runOrThrow(args)
 }
