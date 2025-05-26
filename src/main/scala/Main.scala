@@ -34,6 +34,25 @@ object main extends App {
       case _: ScalaReflectionException => None
     }
   }
+  
+  def extractBootromToTempFile(file: String) = {
+    val resourceStream: InputStream = getClass.getResourceAsStream("/bootrom.img")
+    if (resourceStream == null) {
+      throw new RuntimeException("bootrom.img not found in resources")
+    }
+    val outputStream = new FileOutputStream(file)
+    try {
+      val buffer = new Array[Byte](1024)
+      var bytesRead = resourceStream.read(buffer)
+      while (bytesRead != -1) {
+        outputStream.write(buffer, 0, bytesRead)
+        bytesRead = resourceStream.read(buffer)
+      }
+    } finally {
+      resourceStream.close()
+      outputStream.close()
+    }
+  }
   @main def elaborate(
     @arg(name = "dir", doc = "output directory")
     dir_rel: String,
@@ -42,24 +61,32 @@ object main extends App {
     @arg(name = "ncores", doc = "number of cores")
     ncores: Int = 1
   ) = {
+    val dir = Paths.get(dir_rel).toAbsolutePath().toString
+    val dirPath = os.Path(dir)
+    if (!os.exists(dirPath)) {
+      os.makeDir.all(dirPath)
+    }
+    val bootromPath = (dirPath / "bootrom.img").toString
+    extractBootromToTempFile(bootromPath)
+    
     val config = core match {
-      case "TinyRocket"  => new Config(new With1TinyCore ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "SmallRocket" => new Config(new WithNSmallCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "MedRocket"   => new Config(new WithNMedCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "BigRocket"   => new Config(new WithNBigCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "HugeRocket"  => new Config(new WithNHugeCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "SmallBoom"   => new Config(new WithNSmallBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "MediumBoom"  => new Config(new WithNMediumBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "LargeBoom"   => new Config(new WithNLargeBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "MegaBoom"    => new Config(new WithNMegaBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "GigaBoom"    => new Config(new WithNGigaBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "TinyRocket"  => new Config(new OverrideBootromLocation(bootromPath) ++ new With1TinyCore ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "SmallRocket" => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNSmallCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "MedRocket"   => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNMedCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "BigRocket"   => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNBigCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "HugeRocket"  => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNHugeCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "SmallBoom"   => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNSmallBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "MediumBoom"  => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNMediumBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "LargeBoom"   => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNLargeBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "MegaBoom"    => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNMegaBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "GigaBoom"    => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNGigaBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
       case _ => throw new Exception(s"Unknown core type: $core")
     }
     val config_name = s"$core-$ncores"
-    val dir = Paths.get(dir_rel).toAbsolutePath().toString
     val top = "freechips.rocketchip.system.TestHarness"
     var topName: String = null
     val gen = () => new TestHarness()(config)
+    // Create output directory if it doesn't exist
     val annos = Seq(
       new Elaborate,
       new Convert

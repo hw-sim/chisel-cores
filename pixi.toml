@@ -3,11 +3,20 @@ authors = ["KEKE046 <zhoukexing@pku.edu.cn>"]
 channels = [
     "ucb-bar",
     "conda-forge",
-    "litex-hub"
+    "litex-hub",
+    "https://prefix.dev/conda-forge"
 ]
-name = "ksim-bench"
+name = "chisel-cores"
 platforms = ["linux-64"]
 version = "0.1.0"
+preview = ["pixi-build"]
+
+[package]
+name = "chisel-cores"
+version = "0.1.0"
+
+[package.build]
+backend = { name = "pixi-build-rattler-build",  version = "0.1.*"}
 
 [tasks]
 

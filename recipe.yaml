@@ -1,0 +1,24 @@
+package:
+  name: chisel-cores
+  version: "0.1.0"
+
+source:
+  path: .
+  use_gitignore: true
+
+build:
+  number: 0
+  script: |
+    git submodule deinit -f --all
+    git submodule update --init --recursive
+    git -C rocket-chip apply $PWD/patches/rocket-chip.patch
+    git -C riscv-boom  apply $PWD/patches/riscv-boom.patch
+    sbt assembly
+    install -Dm755 utils/chisel-cores $PREFIX/bin/chisel-cores
+    install -Dm644 target/scala-2.13/chisel-cores-assembly-1.6.jar $PREFIX/bin/chisel-cores.jar
+
+requirements:
+  build:
+    - sbt
+  run:
+    - openjdk

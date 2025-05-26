@@ -20,10 +20,10 @@ KSIM-Bench is a Scala-based SoC generator that builds upon the Berkeley RocketCh
 pixi install
 
 # Build and elaborate a core configuration
-sbt "runMain main elaborate --dir <output_dir> --core <core_type> --ncores <num_cores>"
+sbt run --dir <output_dir> --core <core_type> --ncores <num_cores>
 
 # Example: Generate SmallRocket single-core configuration
-sbt "runMain main elaborate --dir output --core SmallRocket --ncores 1"
+sbt run --dir output --core SmallRocket --ncores 1
 
 # Compile project
 sbt compile
