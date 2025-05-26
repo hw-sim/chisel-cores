@@ -1,0 +1,28 @@
+diff --git a/src/main/scala/v3/exu/core.scala b/src/main/scala/v3/exu/core.scala
+index 751d1cc7..4b1fb04b 100644
+--- a/src/main/scala/v3/exu/core.scala
++++ b/src/main/scala/v3/exu/core.scala
+@@ -39,6 +39,9 @@ import freechips.rocketchip.tile.{TraceBundle}
+ import freechips.rocketchip.rocket.{Causes, PRV, TracedInstruction}
+ import freechips.rocketchip.util.{Str, UIntIsOneOf, CoreMonitorBundle}
+ import freechips.rocketchip.devices.tilelink.{PLICConsts, CLINTConsts}
++import freechips.rocketchip.tile._
++import freechips.rocketchip.util._
++
+ 
+ import boom.v3.common._
+ import boom.v3.ifu.{GlobalHistory, HasBoomFrontendParameters}
+@@ -1445,6 +1448,13 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
+   io.trace.insns map (t => t.valid := false.B)
+   io.trace.custom.get.asInstanceOf[BoomTraceBundle].rob_empty := rob.io.empty
+ 
++  def getInst(uop: MicroOp, inst: UInt): UInt = Mux(uop.is_rvc, Cat(0.U(16.W), inst(15,0)), inst)
++  val allow_loop = PlusArg("allow-loop", width=1).asBool
++  for (w <- 0 until coreWidth) {
++    val inst = getInst(RegNext(rob.io.commit.uops(w)), rob.io.commit.debug_insts(w))
++    assert (allow_loop | (inst =/= 0x0000a001.U), s"Loop Detected, stop simulation")
++  }
++
+   if (trace) {
+     for (w <- 0 until coreWidth) {
+       // Delay the trace so we have a cycle to pull PCs out of the FTQ
