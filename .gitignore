@@ -8,3 +8,4 @@ target
 .bsp
 .bloop
 metals.sbt
+*.conda

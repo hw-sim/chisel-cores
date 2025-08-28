@@ -1,11 +1,6 @@
 [workspace]
 authors = ["KEKE046 <zhoukexing@pku.edu.cn>"]
-channels = [
-    "ucb-bar",
-    "conda-forge",
-    "litex-hub",
-    "https://prefix.dev/conda-forge"
-]
+channels = ["conda-forge"]
 name = "chisel-cores"
 platforms = ["linux-64"]
 version = "0.1.0"
@@ -19,6 +14,7 @@ version = "0.1.0"
 backend = { name = "pixi-build-rattler-build",  version = "0.1.*"}
 
 [tasks]
+upload = "rattler-build upload anaconda --owner KEKE046 ./chisel-cores-*.conda --force"
 
 [dependencies]
 sbt = ">=1.10.2,<2"
