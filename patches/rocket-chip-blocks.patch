@@ -1,0 +1,13 @@
+diff --git a/src/main/scala/devices/uart/UARTTx.scala b/src/main/scala/devices/uart/UARTTx.scala
+index 81d9038..3346dc6 100755
+--- a/src/main/scala/devices/uart/UARTTx.scala
++++ b/src/main/scala/devices/uart/UARTTx.scala
+@@ -66,7 +66,7 @@ class UARTTx(c: UARTParams) extends Module {
+   io.in.ready := io.en && !busy
+   io.tx_busy := busy
+   when (io.in.fire && plusarg_printf) {
+-    printf("UART TX (%x): %c\n", io.in.bits, io.in.bits)
++    printf("%c", io.in.bits)
+   }
+   when (io.in.fire && plusarg_tx) {
+     if (c.includeParity) {

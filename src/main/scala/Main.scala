@@ -25,23 +25,68 @@ import freechips.rocketchip.devices.tilelink.BootROMParams
 import freechips.rocketchip.devices.tilelink.BootROMLocated
 import freechips.rocketchip.devices.debug.Debug
 import freechips.rocketchip.util.AsyncResetReg
+import sifive.blocks.devices.uart.UARTParams
+import sifive.blocks.devices.uart.PeripheryUARTKey
+import freechips.rocketchip.devices.tilelink.MaskROMLocated
+import freechips.rocketchip.devices.tilelink.BootROM
+import freechips.rocketchip.devices.tilelink.MaskROM
+import freechips.rocketchip.util.DontTouch
+import org.chipsalliance.cde.config.Field
+import sifive.blocks.devices.uart.HasPeripheryUART
+import sifive.blocks.devices.uart.UART
 
 class OverrideBootromLocation(contentFileName: String) extends Config((site, here, up) => {
   case BootROMLocated(InSubsystem) => Some(BootROMParams(contentFileName=contentFileName))
 })
 
-class TestHarnessNoDTM()(implicit p: Parameters) extends Module {
+class WithUART(baudrate: BigInt = 115200, address: BigInt = 0x10020000, txEntries: Int = 8, rxEntries: Int = 8) extends Config ((site, here, up) => {
+  case PeripheryUARTKey => up(PeripheryUARTKey) ++ Seq(
+    UARTParams(address = address, nTxEntries = txEntries, nRxEntries = rxEntries, initBaudRate = baudrate))
+})
+
+case object WithDTMKey extends Field[Boolean](false)
+
+class WithDTM() extends Config ((site, here, up) => {
+  case WithDTMKey => true
+})
+
+class RocketSystem(implicit p: Parameters) extends RocketSubsystem
+    with HasAsyncExtInterrupts
+    with CanHaveMasterAXI4MemPort
+    with CanHaveMasterAXI4MMIOPort
+    with CanHaveSlaveAXI4Port
+    with HasPeripheryUART
+{
+  // optionally add ROM devices
+  // Note that setting BootROMLocated will override the reset_vector for all tiles
+  val bootROM  = p(BootROMLocated(location)).map { BootROM.attach(_, this, CBUS) }
+  val maskROMs = p(MaskROMLocated(location)).map { MaskROM.attach(_, this, CBUS) }
+
+  override lazy val module = new RocketSystemModuleImp(this)
+}
+
+class RocketSystemModuleImp[+L <: RocketSystem](_outer: L) extends RocketSubsystemModuleImp(_outer)
+    with HasRTCModuleImp
+    with HasExtInterruptsModuleImp
+    with DontTouch
+
+
+class TestHarness()(implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val success = Output(Bool())
   })
 
-  val ldut = LazyModule(new ExampleRocketSystem)
+  val ldut = LazyModule(new RocketSystem)
   val dut = Module(ldut.module)
 
   ldut.io_clocks.get.elements.values.foreach(_.clock := clock)
   // Allow the debug ndreset to reset the dut, but not until the initial reset has completed
   //val dut_reset = (reset.asBool | ldut.debug.map { debug => AsyncResetReg(debug.ndreset) }.getOrElse(false.B)).asBool
-  val dut_reset = reset.asBool
+  val dut_reset = if(p(WithDTMKey)) {
+    reset.asBool
+  } else {
+    (reset.asBool | ldut.debug.map { debug => AsyncResetReg(debug.ndreset) }.getOrElse(false.B)).asBool
+  }
   ldut.io_clocks.get.elements.values.foreach(_.reset := dut_reset)
 
   dut.dontTouchPorts()
@@ -59,8 +104,12 @@ class TestHarnessNoDTM()(implicit p: Parameters) extends Module {
     a.b.ready := false.B
   })
   //ldut.l2_frontend_bus_axi4.foreach(_.tieoff)
-  //Debug.connectDebug(ldut.debug, ldut.resetctrl, ldut.psd, clock, reset.asBool, io.success)
-  Debug.tieoffDebug(ldut.debug, ldut.resetctrl, Some(ldut.psd))
+
+  if(p(WithDTMKey)) {
+    Debug.connectDebug(ldut.debug, ldut.resetctrl, ldut.psd, clock, reset.asBool, io.success)
+  } else {
+    Debug.tieoffDebug(ldut.debug, ldut.resetctrl, Some(ldut.psd))
+  }
 }
 
 object main extends App {
@@ -98,8 +147,10 @@ object main extends App {
     core: String = "SmallRocket",
     @arg(short = 'n', name = "ncores", doc = "number of cores")
     ncores: Int = 1,
-    @arg(name = "no-dtm", doc = "whether to disable DTM")
-    no_dtm: Flag
+    @arg(name = "with-dtm", doc = "whether to enable DTM")
+    with_dtm: Flag,
+    @arg(name = "with-uart", doc = "whether to enable UART")
+    with_uart: Flag
   ) = {
     val dir = Paths.get(out).toAbsolutePath().toString
     val dirPath = os.Path(dir)
@@ -108,27 +159,29 @@ object main extends App {
     }
     val bootromPath = (dirPath / "bootrom.img").toString
     extractBootromToTempFile(bootromPath)
-    
+    var baseconfig = new OverrideBootromLocation(bootromPath) ++ new WithCoherentBusTopology ++ new BaseConfig
+    if (with_dtm.value) {
+      baseconfig = new WithDTM() ++ baseconfig
+    }
+    if (with_uart.value) {
+      baseconfig = new WithUART() ++ baseconfig
+    }
     val config = core match {
-      case "TinyRocket"  => new Config(new OverrideBootromLocation(bootromPath) ++ new With1TinyCore ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "SmallRocket" => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNSmallCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "MedRocket"   => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNMedCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "BigRocket"   => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNBigCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "HugeRocket"  => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNHugeCores(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "SmallBoom"   => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNSmallBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "MediumBoom"  => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNMediumBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "LargeBoom"   => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNLargeBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "MegaBoom"    => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNMegaBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
-      case "GigaBoom"    => new Config(new OverrideBootromLocation(bootromPath) ++ new WithNGigaBooms(ncores) ++ new WithCoherentBusTopology ++ new BaseConfig)
+      case "TinyRocket"  => new Config(new With1TinyCore ++ baseconfig)
+      case "SmallRocket" => new Config(new WithNSmallCores(ncores) ++ baseconfig)
+      case "MedRocket"   => new Config(new WithNMedCores(ncores) ++ baseconfig)
+      case "BigRocket"   => new Config(new WithNBigCores(ncores) ++ baseconfig)
+      case "HugeRocket"  => new Config(new WithNHugeCores(ncores) ++ baseconfig)
+      case "SmallBoom"   => new Config(new WithNSmallBooms(ncores) ++ baseconfig)
+      case "MediumBoom"  => new Config(new WithNMediumBooms(ncores) ++ baseconfig)
+      case "LargeBoom"   => new Config(new WithNLargeBooms(ncores) ++ baseconfig)
+      case "MegaBoom"    => new Config(new WithNMegaBooms(ncores) ++ baseconfig)
+      case "GigaBoom"    => new Config(new WithNGigaBooms(ncores) ++ baseconfig)
       case _ => throw new Exception(s"Unknown core type: $core")
     }
     val config_name = s"$core-$ncores"
     var topName: String = null
-    val gen = () => if(no_dtm.value) {
-      new TestHarnessNoDTM()(config)
-    } else {
-      new TestHarness()(config)
-    }
+    val gen = () => new TestHarness()(config)
     // Create output directory if it doesn't exist
     val annos = Seq(
       new Elaborate,

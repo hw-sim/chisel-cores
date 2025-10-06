@@ -119,8 +119,14 @@ lazy val boom = freshProject("boom", file("riscv-boom"))
   .settings(libraryDependencies ++= rocketLibDeps.value)
   .settings(commonSettings)
 
+lazy val `rocket-chip-blocks` = freshProject("rocket-chip-blocks", file("rocket-chip-blocks"))
+  .dependsOn(rocketchip)
+  .settings(commonSettings)
+  .settings(chiselSettings)
+  .settings(scalaTestSettings)
+
 lazy val `chisel-cores` = (project in file("."))
-  .dependsOn(boom, rocketchip)
+  .dependsOn(boom, rocketchip, `rocket-chip-blocks`)
   .settings(libraryDependencies ++= rocketLibDeps.value)
   .settings(
     libraryDependencies ++= Seq(
