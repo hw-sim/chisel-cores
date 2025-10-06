@@ -1,3 +1,5 @@
+package chiselcores
+
 import org.chipsalliance.cde.config.Config
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.system._
@@ -5,6 +7,7 @@ import freechips.rocketchip.rocket._
 import circt.stage
 import boom.v3.common._
 import freechips.rocketchip.diplomacy.Main
+import chisel3._
 import chisel3.RawModule
 import chisel3.stage.ChiselGeneratorAnnotation
 import chisel3.stage.phases.{Elaborate, Convert}
@@ -20,10 +23,45 @@ import java.io.{InputStream, FileOutputStream}
 import freechips.rocketchip.rocket.WithNHugeCores
 import freechips.rocketchip.devices.tilelink.BootROMParams
 import freechips.rocketchip.devices.tilelink.BootROMLocated
+import freechips.rocketchip.devices.debug.Debug
+import freechips.rocketchip.util.AsyncResetReg
 
 class OverrideBootromLocation(contentFileName: String) extends Config((site, here, up) => {
   case BootROMLocated(InSubsystem) => Some(BootROMParams(contentFileName=contentFileName))
 })
+
+class TestHarnessNoDTM()(implicit p: Parameters) extends Module {
+  val io = IO(new Bundle {
+    val success = Output(Bool())
+  })
+
+  val ldut = LazyModule(new ExampleRocketSystem)
+  val dut = Module(ldut.module)
+
+  ldut.io_clocks.get.elements.values.foreach(_.clock := clock)
+  // Allow the debug ndreset to reset the dut, but not until the initial reset has completed
+  //val dut_reset = (reset.asBool | ldut.debug.map { debug => AsyncResetReg(debug.ndreset) }.getOrElse(false.B)).asBool
+  val dut_reset = reset.asBool
+  ldut.io_clocks.get.elements.values.foreach(_.reset := dut_reset)
+
+  dut.dontTouchPorts()
+  dut.tieOffInterrupts()
+  SimAXIMem.connectMem(ldut)
+  SimAXIMem.connectMMIO(ldut)
+  ldut.l2_frontend_bus_axi4.foreach( a => {
+    a.ar.valid := false.B
+    a.ar.bits := DontCare
+    a.aw.valid := false.B
+    a.aw.bits := DontCare
+    a.w.valid := false.B
+    a.w.bits := DontCare
+    a.r.ready := false.B
+    a.b.ready := false.B
+  })
+  //ldut.l2_frontend_bus_axi4.foreach(_.tieoff)
+  //Debug.connectDebug(ldut.debug, ldut.resetctrl, ldut.psd, clock, reset.asBool, io.success)
+  Debug.tieoffDebug(ldut.debug, ldut.resetctrl, Some(ldut.psd))
+}
 
 object main extends App {
   def getClassFullName(className: String): Option[String] = {
@@ -54,14 +92,16 @@ object main extends App {
     }
   }
   @main def elaborate(
-    @arg(name = "dir", doc = "output directory")
-    dir_rel: String,
-    @arg(name = "core", doc = "which core to use (TinyRocket, SmallRocket, MedRocket, BigRocket, HugeRocket, SmallBoom, MediumBoom, LargeBoom, MegaBoom, GigaBoom)")
+    @arg(short = 'o', name = "out", doc = "output directory")
+    out: String,
+    @arg(positional=true, doc = "which core to use (TinyRocket, SmallRocket, MedRocket, BigRocket, HugeRocket, SmallBoom, MediumBoom, LargeBoom, MegaBoom, GigaBoom)")
     core: String = "SmallRocket",
-    @arg(name = "ncores", doc = "number of cores")
-    ncores: Int = 1
+    @arg(short = 'n', name = "ncores", doc = "number of cores")
+    ncores: Int = 1,
+    @arg(name = "no-dtm", doc = "whether to disable DTM")
+    no_dtm: Flag
   ) = {
-    val dir = Paths.get(dir_rel).toAbsolutePath().toString
+    val dir = Paths.get(out).toAbsolutePath().toString
     val dirPath = os.Path(dir)
     if (!os.exists(dirPath)) {
       os.makeDir.all(dirPath)
@@ -83,9 +123,12 @@ object main extends App {
       case _ => throw new Exception(s"Unknown core type: $core")
     }
     val config_name = s"$core-$ncores"
-    val top = "freechips.rocketchip.system.TestHarness"
     var topName: String = null
-    val gen = () => new TestHarness()(config)
+    val gen = () => if(no_dtm.value) {
+      new TestHarnessNoDTM()(config)
+    } else {
+      new TestHarness()(config)
+    }
     // Create output directory if it doesn't exist
     val annos = Seq(
       new Elaborate,
