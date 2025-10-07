@@ -1,18 +1,8 @@
 diff --git a/src/main/scala/rocket/RocketCore.scala b/src/main/scala/rocket/RocketCore.scala
-index 1491a4143..fcda07b7e 100644
+index cc5ab6fcc..0fa88c4d8 100644
 --- a/src/main/scala/rocket/RocketCore.scala
 +++ b/src/main/scala/rocket/RocketCore.scala
-@@ -1203,6 +1203,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
-   coreMonitorBundle.excpt := csr.io.trace(0).exception
-   coreMonitorBundle.priv_mode := csr.io.trace(0).priv
- 
-+  val allow_loop = PlusArg("allow-loop", width=1).asBool
-+  assert (allow_loop | (coreMonitorBundle.inst =/= 0x0000a001.U), s"Loop Detected, stop simulation")
-+
-   if (enableCommitLog) {
-     val t = csr.io.trace(0)
-     val rd = wb_waddr
-@@ -1230,7 +1233,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
+@@ -1261,7 +1261,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
      }
    }
    else {

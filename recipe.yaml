@@ -1,16 +1,16 @@
 package:
   name: chisel-cores
-  version: "0.3.2"
+  version: "0.3.3"
 
 source:
   path: .
   use_gitignore: true
 
 build:
-  number: 1
+  number: 2
   script: |
     patch -d rocket-chip -p 1 < $PWD/patches/rocket-chip.patch
-    patch -d riscv-boom  -p 1 < $PWD/patches/riscv-boom.patch
+    # patch -d riscv-boom  -p 1 < $PWD/patches/riscv-boom.patch
     patch -d rocket-chip-blocks -p 1 < $PWD/patches/rocket-chip-blocks.patch
     sbt assembly
     install -Dm755 utils/chisel-cores $PREFIX/bin/chisel-cores
