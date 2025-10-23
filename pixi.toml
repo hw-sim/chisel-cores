@@ -1,6 +1,6 @@
 [workspace]
 authors = ["KEKE046 <zhoukexing@pku.edu.cn>"]
-channels = ["conda-forge"]
+channels = ["PisonJay", "conda-forge"]
 name = "chisel-cores"
 platforms = ["linux-64"]
 version = "0.1.0"
@@ -8,7 +8,7 @@ preview = ["pixi-build"]
 
 [package]
 name = "chisel-cores"
-version = "0.1.0"
+version = "0.4.3"
 
 [package.build]
 backend = { name = "pixi-build-rattler-build",  version = "0.1.*"}
@@ -23,3 +23,4 @@ upload = "rattler-build upload anaconda --owner KEKE046 ./chisel-cores-*.conda -
 [dependencies]
 sbt = ">=1.10.2,<2"
 dtc = ">=1.7.2,<2"
+riscv-tools = ">=1.0.8,<2"

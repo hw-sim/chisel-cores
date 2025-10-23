@@ -34,20 +34,27 @@ import freechips.rocketchip.util.DontTouch
 import org.chipsalliance.cde.config.Field
 import sifive.blocks.devices.uart.HasPeripheryUART
 import sifive.blocks.devices.uart.UART
+import freechips.rocketchip.devices.debug.DebugModuleKey
+import freechips.rocketchip.devices.debug.DefaultDebugModuleParams
 
 class OverrideBootromLocation(contentFileName: String) extends Config((site, here, up) => {
   case BootROMLocated(InSubsystem) => Some(BootROMParams(contentFileName=contentFileName))
 })
 
-class WithUART(baudrate: BigInt = 115200, address: BigInt = 0x10020000, txEntries: Int = 8, rxEntries: Int = 8) extends Config ((site, here, up) => {
-  case PeripheryUARTKey => up(PeripheryUARTKey) ++ Seq(
-    UARTParams(address = address, nTxEntries = txEntries, nRxEntries = rxEntries, initBaudRate = baudrate))
+class WithUART(hasUART: Boolean=true) extends Config ((site, here, up) => {
+  case PeripheryUARTKey => if(hasUART) {
+    Seq(UARTParams(0x10000000))
+  } else {
+    Nil
+  }
 })
 
-case object WithDTMKey extends Field[Boolean](false)
-
-class WithDTM() extends Config ((site, here, up) => {
-  case WithDTMKey => true
+class WithDTM(hasDTM: Boolean=true) extends Config ((site, here, up) => {
+  case DebugModuleKey => if(hasDTM) {
+    Some(DefaultDebugModuleParams(64))
+  } else {
+    None
+  }
 })
 
 class RocketSystem(implicit p: Parameters) extends RocketSubsystem
@@ -82,11 +89,7 @@ class TestHarness()(implicit p: Parameters) extends Module {
   ldut.io_clocks.get.elements.values.foreach(_.clock := clock)
   // Allow the debug ndreset to reset the dut, but not until the initial reset has completed
   //val dut_reset = (reset.asBool | ldut.debug.map { debug => AsyncResetReg(debug.ndreset) }.getOrElse(false.B)).asBool
-  val dut_reset = if(p(WithDTMKey)) {
-    reset.asBool
-  } else {
-    (reset.asBool | ldut.debug.map { debug => AsyncResetReg(debug.ndreset) }.getOrElse(false.B)).asBool
-  }
+  val dut_reset = (reset.asBool | ldut.debug.map { debug => AsyncResetReg(debug.ndreset) }.getOrElse(false.B)).asBool
   ldut.io_clocks.get.elements.values.foreach(_.reset := dut_reset)
 
   dut.dontTouchPorts()
@@ -104,12 +107,9 @@ class TestHarness()(implicit p: Parameters) extends Module {
     a.b.ready := false.B
   })
   //ldut.l2_frontend_bus_axi4.foreach(_.tieoff)
-
-  if(p(WithDTMKey)) {
-    Debug.connectDebug(ldut.debug, ldut.resetctrl, ldut.psd, clock, reset.asBool, io.success)
-  } else {
-    Debug.tieoffDebug(ldut.debug, ldut.resetctrl, Some(ldut.psd))
-  }
+  io.success := false.B
+  ldut.uart.foreach(UART.tieoff)
+  Debug.connectDebug(ldut.debug, ldut.resetctrl, ldut.psd, clock, reset.asBool, io.success)
 }
 
 object main extends App {
@@ -150,22 +150,24 @@ object main extends App {
     @arg(name = "with-dtm", doc = "whether to enable DTM")
     with_dtm: Flag,
     @arg(name = "with-uart", doc = "whether to enable UART")
-    with_uart: Flag
+    with_uart: Flag,
+    @arg(name = "with-bootrom", doc = "whether to enable bootrom")
+    with_bootrom: Option[String] = None,
   ) = {
     val dir = Paths.get(out).toAbsolutePath().toString
     val dirPath = os.Path(dir)
     if (!os.exists(dirPath)) {
       os.makeDir.all(dirPath)
     }
-    val bootromPath = (dirPath / "bootrom.img").toString
-    extractBootromToTempFile(bootromPath)
-    var baseconfig = new OverrideBootromLocation(bootromPath) ++ new WithCoherentBusTopology ++ new BaseConfig
-    if (with_dtm.value) {
-      baseconfig = new WithDTM() ++ baseconfig
+    val bootromPath = with_bootrom match {
+      case Some(path) => Paths.get(path).toAbsolutePath().toString
+      case None => {
+        val bootromPath = (dirPath / "bootrom.img").toString
+        extractBootromToTempFile(bootromPath)
+        bootromPath
+      }
     }
-    if (with_uart.value) {
-      baseconfig = new WithUART() ++ baseconfig
-    }
+    val baseconfig = new WithUART(with_uart.value) ++ new WithDTM(with_dtm.value) ++ new OverrideBootromLocation(bootromPath) ++ new WithCoherentBusTopology ++ new BaseConfig
     val config = core match {
       case "TinyRocket"  => new Config(new With1TinyCore ++ baseconfig)
       case "SmallRocket" => new Config(new WithNSmallCores(ncores) ++ baseconfig)
